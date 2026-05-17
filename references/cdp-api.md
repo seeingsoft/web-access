@@ -96,6 +96,37 @@ curl -s "http://localhost:3456/screenshot?target=ID&file=/tmp/shot.png"
 - 提取大量数据时用 `JSON.stringify()` 包裹，确保返回字符串
 - 根据页面实际 DOM 结构编写选择器，不要套用固定模板
 
+## 中文编码问题
+
+`/eval` 返回包含中文字符的字符串时可能出现乱码（如 `"张阿梅"` → `""`）。
+
+**根因**：CDP Proxy 的 `JSON.stringify()` 在 HTTP 响应传输中损坏了中文 UTF-16 编码。
+
+### 解决方案：Base64 编码传输
+
+在 eval 表达式中用 `btoa(unescape(encodeURIComponent(...)))` 编码中文内容：
+
+```bash
+curl -s -X POST "http://localhost:3456/eval?target=ID" \
+  -H "Content-Type: text/plain" \
+  --data-raw "JSON.stringify({b64:btoa(unescape(encodeURIComponent(document.querySelector('.name')?.innerText||'')))})"
+```
+
+本地解码：
+
+```python
+import json, base64
+raw = json.loads(response_text)
+inner = json.loads(raw['value']) if isinstance(raw.get('value'), str) else raw
+text = base64.b64decode(inner['b64']).decode('utf-8')
+```
+
+### 影响
+
+- 中文文本（姓名、职位、简历、消息等）：**必须** 使用 Base64 编码
+- 纯 ASCII 内容（数字、英文、selector）：不受影响，无需 Base64
+- Mac 和 Windows 均受影响
+
 ## 错误处理
 
 | 错误 | 原因 | 解决 |
@@ -104,3 +135,4 @@ curl -s "http://localhost:3456/screenshot?target=ID&file=/tmp/shot.png"
 | `attach 失败` | targetId 无效或 tab 已关闭 | 用 `/targets` 获取最新列表 |
 | `CDP 命令超时` | 页面长时间未响应 | 重试或检查 tab 状态 |
 | `端口已被占用` | 另一个 proxy 已在运行 | 已有实例可直接复用 |
+| `DevToolsActivePort UUID 不匹配` | Chrome DevToolsActivePort 文件中的 UUID 与 actual session 不匹配 | 重启 Chrome（完全关闭再重新以调试模式启动），或清理 DevToolsActivePort 文件后重试 |

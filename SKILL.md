@@ -210,6 +210,84 @@ curl -s "http://localhost:3456/close?target=ID"
 
 用户 Chrome 真实渲染，截图可捕获当前视频帧。核心能力：通过 `/eval` 操控 `<video>` 元素（获取时长、seek 到任意时间点、播放/暂停/全屏），配合 `/screenshot` 采帧，可对视频内容进行离散采样分析。
 
+### 高级 CDP 操作
+
+#### iframe 内坐标点击
+
+对于 iframe 内的元素，可通过 CDP `Input.dispatchMouseEvent` 直接在坐标发起鼠标事件，无需父页面 marker 中转。
+
+**原理**：通过 eval 获取 iframe 内目标元素的坐标，再向 CDP Proxy 发送鼠标事件序列。
+
+```javascript
+// Step 1: 在 iframe 内获取目标元素坐标
+var iframe = document.querySelector(".frame-box iframe");
+var doc = iframe.contentDocument;
+var btn = doc.querySelector(".btn-greet");
+var rect = btn.getBoundingClientRect();
+// iframe 内坐标 → 视口坐标
+var viewportX = rect.x + iframe.getBoundingClientRect().x;
+var viewportY = rect.y + iframe.getBoundingClientRect().y;
+```
+
+```bash
+# Step 2: 通过 CDP 直接发送鼠标事件序列（完整事件链）
+# mousedown → mouseup → click
+curl -s -X POST "http://localhost:3456/eval?target=TARGET_ID" \
+  -d '/* mousedown */ JSON.stringify({x: X, y: Y})'
+```
+
+**注意**：对于 Vue 组件按钮，即使完整事件链也可能无法触发（见 clickAt 限制）。
+
+#### 完整鼠标事件链
+
+当需要更高仿真度时，可模拟完整鼠标事件序列（而非单次 click）：
+
+```javascript
+// 通过 CDP 发送完整事件链
+// 1. mousemove 到目标坐标
+// 2. mousedown
+// 3. 短暂延迟
+// 4. mouseup
+// 5. click（由 mouseup 隐式触发）
+```
+
+这在需要绕过反爬检测时有用，但 BOSS 直聘的 Vue 组件对程序化事件链也可能不响应。
+
+#### iframe 上下文 eval
+
+在父页面执行 eval 时，可通过 `iframe.contentDocument` 访问 iframe 内的 DOM：
+
+```javascript
+var iframe = document.querySelector(".frame-box iframe");
+var doc = iframe.contentDocument;
+// 现在可以在 iframe 上下文中查询/操作
+var cards = doc.querySelectorAll(".card-item");
+var text = cards[0].querySelector(".name").innerText;
+```
+
+**同源限制**：仅当 iframe 与父页面同源时才可访问 `contentDocument`。BOSS 直聘的 iframe 是同源的，因此可以访问。
+
+#### 风控信号检测
+
+操作后建议自动检测页面是否出现风控信号：
+
+```javascript
+function checkRiskSignals() {
+  var bodyText = document.body.innerText;
+  var url = window.location.href;
+  
+  var signals = [];
+  if (bodyText.includes("检测到异常操作")) signals.push("风控限制");
+  if (bodyText.includes("验证码")) signals.push("验证码");
+  if (url.includes("login") && !url.includes("chat")) signals.push("跳转到登录页");
+  if (document.querySelector(".overdue-tip-icon")) signals.push("权益耗尽");
+  
+  return signals;
+}
+```
+
+出现任意风控信号时，**立即停止所有后续操作**，进入暂停态并通知用户。
+
 ### 登录判断
 
 用户日常 Chrome 天然携带登录态，大多数常用网站已登录。
@@ -296,3 +374,4 @@ updated: 2026-03-19
 |------|---------|
 | `references/cdp-api.md` | 需要 CDP API 详细参考、JS 提取模式、错误处理时 |
 | `references/site-patterns/{domain}.md` | 确定目标网站后，读取对应站点经验 |
+| `references/boss-cdp-experience-2026-05-11.md` | BOSS直聘 CDP 自动化实测经验（含风控事故、iframe点击方案、安全策略） |

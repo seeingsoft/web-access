@@ -399,12 +399,18 @@ const server = http.createServer(async (req, res) => {
         awaitPromise: true,
       }, sid);
       if (resp.result?.result?.value !== undefined) {
-        res.end(JSON.stringify({ value: resp.result.result.value }));
+        const result = { value: resp.result.result.value };
+        const json = JSON.stringify(result);
+        // 强制 UTF-8 编码
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.end(Buffer.from(json, 'utf-8'));
       } else if (resp.result?.exceptionDetails) {
         res.statusCode = 400;
-        res.end(JSON.stringify({ error: resp.result.exceptionDetails.text }));
+        const errResult = { error: resp.result.exceptionDetails.text };
+        res.end(Buffer.from(JSON.stringify(errResult), 'utf-8'));
       } else {
-        res.end(JSON.stringify(resp.result));
+        const json = JSON.stringify(resp.result);
+        res.end(Buffer.from(json, 'utf-8'));
       }
     }
 
